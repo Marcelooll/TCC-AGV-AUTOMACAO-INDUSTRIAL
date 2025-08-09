@@ -1,98 +1,99 @@
-
 /**
- * @file test_robot_rotation.ino
- * @brief Código de teste para um sistema com 2 motores e 2 pontes H BTS7960.
+ * @file test_led_directional_safe.ino
+ * @brief Código de teste para LEDs direcionais, com pinos seguros para ESP32.
  * 
- * Objetivo: Fazer o robô girar sobre seu próprio eixo nos sentidos
- * horário e anti-horário.
+ * Objetivo: Este código serve para testar o acionamento de dois LEDs 
+ * que indicam a direção de movimento de um robô (Esquerda e Direita).
+ * Ele foi revisado para usar pinos (GPIOs) que são seguros para uso geral no ESP32,
+ * evitando problemas durante a inicialização do microcontrolador.
+ * 
+ * Como funciona:
+ * - Usamos pinos de entrada com resistores de PULL-UP internos. Isso significa que o pino já está em nível lógico ALTO (HIGH). Para ativá-lo, você deve conectá-lo ao GND (Terra).
+ * - Se o pino de entrada para "direita" for conectado ao GND, o LED da direita piscará.
+ * - Se o pino de entrada para "esquerda" for conectado ao GND, o LED da esquerda piscará.
+ * - Se nenhum dos pinos de entrada for aterrado, ambos os LEDs permanecerão apagados.
+ * 
+ * Montagem do circuito:
+ * - Conecte um LED ao pino `LED_DIREITA_PIN`. O lado maior do LED (anodo) vai no pino, e o menor (catodo) vai no GND (terra) através de um resistor de 220 ohms.
+ * - Conecte outro LED ao pino `LED_ESQUERDA_PIN` da mesma forma.
+ * - Conecte um botão ou um fio ao pino `ENTRADA_DIREITA_PIN`. O outro lado do botão/fio deve ser conectado ao GND (Terra).
+ * - Conecte outro botão ou um fio ao pino `ENTRADA_ESQUERDA_PIN` da mesma forma.
  */
 
-// --- Configuração dos Pinos do Motor 1 (Direito) ---
-// Mude o valor padrão e defina seu pino.
-const int M1_R_EN_PIN = 21; // Enable Rotação Direita
-const int M1_L_EN_PIN = 19; // Enable Rotação Esquerda
-const int M1_RPWM_PIN = 18; // PWM Rotação Direita (Frente)
-const int M1_LPWM_PIN = 5;  // PWM Rotação Esquerda (Trás)
+// --- Pinos de Configuração (Seguros para ESP32) ---
 
-// --- Configuração dos Pinos do Motor 2 (Esquerdo) ---
-// Mude o valor padrão e defina seu pino.
-const int M2_R_EN_PIN = 17; // Enable Rotação Direita
-const int M2_L_EN_PIN = 16; // Enable Rotação Esquerda
-const int M2_RPWM_PIN = 4;  // PWM Rotação Direita (Frente)
-const int M2_LPWM_PIN = 2;  // PWM Rotação Esquerda (Trás)
+// Pinos de SAÍDA (OUTPUT) para os LEDs
+// GPIOs 22 e 23 são seguros para uso como saídas.
+const int LED_DIREITA_PIN = 22;  // LED que indica movimento para a direita
+const int LED_ESQUERDA_PIN = 23; // LED que indica movimento para a esquerda
 
-// --- Constantes ---
-const int ROTATION_SPEED = 200; // Velocidade de rotação (0 a 255)
+// Pinos de ENTRADA (INPUT) para os comandos
+// GPIOs 16 e 17 são seguros para uso como entradas.
+const int ENTRADA_DIREITA_PIN = 16; // Pino que recebe o comando "direita"
+const int ENTRADA_ESQUERDA_PIN = 17; // Pino que recebe o comando "esquerda"
 
+// --- Variáveis Globais ---
+int comandoDireita = 0;
+int comandoEsquerda = 0;
+
+/**
+ * @brief Função de configuração (setup).
+ */
 void setup() {
-  Serial.begin(115200);
-  Serial.println("Teste de Rotacao do Robo com 2 Motores");
+  Serial.begin(9600);
+  Serial.println(">>> Teste de LEDs Direcionais (Pinos Seguros) <<<");
+  Serial.println("Aterre os pinos de entrada para ver os LEDs piscarem.");
+  Serial.println("---------------------------------------------------");
 
-  // Configura todos os pinos como saída
-  pinMode(M1_R_EN_PIN, OUTPUT);
-  pinMode(M1_L_EN_PIN, OUTPUT);
-  pinMode(M1_RPWM_PIN, OUTPUT);
-  pinMode(M1_LPWM_PIN, OUTPUT);
-  
-  pinMode(M2_R_EN_PIN, OUTPUT);
-  pinMode(M2_L_EN_PIN, OUTPUT);
-  pinMode(M2_RPWM_PIN, OUTPUT);
-  pinMode(M2_LPWM_PIN, OUTPUT);
+  // Configura os pinos dos LEDs como SAÍDA (OUTPUT)
+  pinMode(LED_DIREITA_PIN, OUTPUT);
+  pinMode(LED_ESQUERDA_PIN, OUTPUT);
 
-  // Habilita ambos os drivers
-  digitalWrite(M1_R_EN_PIN, HIGH);
-  digitalWrite(M1_L_EN_PIN, HIGH);
-  digitalWrite(M2_R_EN_PIN, HIGH);
-  digitalWrite(M2_L_EN_PIN, HIGH);
-
-  Serial.println("Drivers habilitados. Iniciando teste de rotacao...");
+  // Configura os pinos de comando como ENTRADA com PULL-UP.
+  // O pino fica em estado ALTO (HIGH) por padrão. O comando é ativado
+  // quando o pino é conectado ao GND, fazendo a leitura ser BAIXA (LOW).
+  pinMode(ENTRADA_DIREITA_PIN, INPUT_PULLUP);
+  pinMode(ENTRADA_ESQUERDA_PIN, INPUT_PULLUP);
 }
 
-// Para o robô
-void stopRobot() {
-  Serial.println("Acao: PARANDO");
-  analogWrite(M1_RPWM_PIN, 0);
-  analogWrite(M1_LPWM_PIN, 0);
-  analogWrite(M2_RPWM_PIN, 0);
-  analogWrite(M2_LPWM_PIN, 0);
-}
-
-// Gira no sentido horário (motor direito para trás, motor esquerdo para frente)
-void turnClockwise() {
-  Serial.println("Acao: Girando no sentido HORARIO");
-  // Motor Direito (M1) para trás
-  analogWrite(M1_RPWM_PIN, 0);
-  analogWrite(M1_LPWM_PIN, ROTATION_SPEED);
-  // Motor Esquerdo (M2) para frente
-  analogWrite(M2_RPWM_PIN, ROTATION_SPEED);
-  analogWrite(M2_LPWM_PIN, 0);
-}
-
-// Gira no sentido anti-horário (motor direito para frente, motor esquerdo para trás)
-void turnCounterClockwise() {
-  Serial.println("Acao: Girando no sentido ANTI-HORARIO");
-  // Motor Direito (M1) para frente
-  analogWrite(M1_RPWM_PIN, ROTATION_SPEED);
-  analogWrite(M1_LPWM_PIN, 0);
-  // Motor Esquerdo (M2) para trás
-  analogWrite(M2_RPWM_PIN, 0);
-  analogWrite(M2_LPWM_PIN, ROTATION_SPEED);
-}
-
+/**
+ * @brief Função de loop principal.
+ */
 void loop() {
-  // Gira no sentido horário por 3 segundos
-  turnClockwise();
-  delay(3000);
+  // Lê o estado dos pinos de entrada.
+  // A leitura será LOW se o pino estiver aterrado (botão pressionado).
+  comandoDireita = digitalRead(ENTRADA_DIREITA_PIN);
+  comandoEsquerda = digitalRead(ENTRADA_ESQUERDA_PIN);
 
-  // Para por 2 segundos
-  stopRobot();
-  delay(2000);
+  // --- Lógica de Controle dos LEDs ---
 
-  // Gira no sentido anti-horário por 3 segundos
-  turnCounterClockwise();
-  delay(3000);
+  // Verifica se o comando para ir para a DIREITA foi recebido (pino em LOW)
+  if (comandoDireita == LOW) {
+    Serial.println("Comando: DIREITA -> Pisca LED da direita");
+    
+    digitalWrite(LED_DIREITA_PIN, HIGH);
+    delay(250);
+    digitalWrite(LED_DIREITA_PIN, LOW);
 
-  // Para por 2 segundos
-  stopRobot();
-  delay(2000);
+    // Garante que o LED da esquerda esteja apagado
+    digitalWrite(LED_ESQUERDA_PIN, LOW);
+  }
+  // Verifica se o comando para ir para a ESQUERDA foi recebido (pino em LOW)
+  else if (comandoEsquerda == LOW) {
+    Serial.println("Comando: ESQUERDA -> Pisca LED da esquerda");
+
+    digitalWrite(LED_ESQUERDA_PIN, HIGH);
+    delay(250);
+    digitalWrite(LED_ESQUERDA_PIN, LOW);
+
+    // Garante que o LED da direita esteja apagado
+    digitalWrite(LED_DIREITA_PIN, LOW);
+  }
+  // Se nenhum comando for recebido
+  else {
+    // Garante que ambos os LEDs estejam apagados
+    digitalWrite(LED_DIREITA_PIN, LOW);
+    digitalWrite(LED_ESQUERDA_PIN, LOW);
+  }
+   delay(100); // Pequeno delay para estabilidade
 }

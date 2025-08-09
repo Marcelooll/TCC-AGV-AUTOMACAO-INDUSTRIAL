@@ -1,72 +1,99 @@
-
 /**
- * @file test_motor_bts7960.ino
- * @brief Código de teste para um motor DC com o driver de ponte H BTS7960 e ESP32.
+ * @file test_led_directional_safe.ino
+ * @brief Código de teste para LEDs direcionais, com pinos seguros para ESP32.
  * 
- * Objetivo: Testar o funcionamento de um motor, girando-o para frente,
- * para trás e parando em sequência.
+ * Objetivo: Este código serve para testar o acionamento de dois LEDs 
+ * que indicam a direção de movimento de um robô (Esquerda e Direita).
+ * Ele foi revisado para usar pinos (GPIOs) que são seguros para uso geral no ESP32,
+ * evitando problemas durante a inicialização do microcontrolador.
+ * 
+ * Como funciona:
+ * - Usamos pinos de entrada com resistores de PULL-UP internos. Isso significa que o pino já está em nível lógico ALTO (HIGH). Para ativá-lo, você deve conectá-lo ao GND (Terra).
+ * - Se o pino de entrada para "direita" for conectado ao GND, o LED da direita piscará.
+ * - Se o pino de entrada para "esquerda" for conectado ao GND, o LED da esquerda piscará.
+ * - Se nenhum dos pinos de entrada for aterrado, ambos os LEDs permanecerão apagados.
+ * 
+ * Montagem do circuito:
+ * - Conecte um LED ao pino `LED_DIREITA_PIN`. O lado maior do LED (anodo) vai no pino, e o menor (catodo) vai no GND (terra) através de um resistor de 220 ohms.
+ * - Conecte outro LED ao pino `LED_ESQUERDA_PIN` da mesma forma.
+ * - Conecte um botão ou um fio ao pino `ENTRADA_DIREITA_PIN`. O outro lado do botão/fio deve ser conectado ao GND (Terra).
+ * - Conecte outro botão ou um fio ao pino `ENTRADA_ESQUERDA_PIN` da mesma forma.
  */
 
-// --- Configuração dos Pinos ---
-// Mude o valor padrão e defina seu pino.
-const int R_EN_PIN = 21;  // Pino de habilitação (Enable) para rotação à direita (frente)
-const int L_EN_PIN = 19;  // Pino de habilitação (Enable) para rotação à esquerda (trás)
-const int RPWM_PIN = 18;  // Pino PWM para controle de velocidade à direita (frente)
-const int LPWM_PIN = 5;   // Pino PWM para controle de velocidade à esquerda (trás)
+// --- Pinos de Configuração (Seguros para ESP32) ---
 
-// --- Constantes ---
-const int MOTOR_SPEED = 200; // Velocidade do motor (0 a 255)
+// Pinos de SAÍDA (OUTPUT) para os LEDs
+// GPIOs 22 e 23 são seguros para uso como saídas.
+const int LED_DIREITA_PIN = 22;  // LED que indica movimento para a direita
+const int LED_ESQUERDA_PIN = 23; // LED que indica movimento para a esquerda
 
+// Pinos de ENTRADA (INPUT) para os comandos
+// GPIOs 16 e 17 são seguros para uso como entradas.
+const int ENTRADA_DIREITA_PIN = 16; // Pino que recebe o comando "direita"
+const int ENTRADA_ESQUERDA_PIN = 17; // Pino que recebe o comando "esquerda"
+
+// --- Variáveis Globais ---
+int comandoDireita = 0;
+int comandoEsquerda = 0;
+
+/**
+ * @brief Função de configuração (setup).
+ */
 void setup() {
-  // Inicia a comunicação serial
-  Serial.begin(115200);
-  Serial.println("Teste do Motor com Ponte H BTS7960");
+  Serial.begin(9600);
+  Serial.println(">>> Teste de LEDs Direcionais (Pinos Seguros) <<<");
+  Serial.println("Aterre os pinos de entrada para ver os LEDs piscarem.");
+  Serial.println("---------------------------------------------------");
 
-  // Configura todos os pinos como saída
-  pinMode(R_EN_PIN, OUTPUT);
-  pinMode(L_EN_PIN, OUTPUT);
-  pinMode(RPWM_PIN, OUTPUT);
-  pinMode(LPWM_PIN, OUTPUT);
+  // Configura os pinos dos LEDs como SAÍDA (OUTPUT)
+  pinMode(LED_DIREITA_PIN, OUTPUT);
+  pinMode(LED_ESQUERDA_PIN, OUTPUT);
 
-  // Habilita o driver da ponte H
-  digitalWrite(R_EN_PIN, HIGH);
-  digitalWrite(L_EN_PIN, HIGH);
-  
-  Serial.println("Driver habilitado. Iniciando sequencia de teste...");
+  // Configura os pinos de comando como ENTRADA com PULL-UP.
+  // O pino fica em estado ALTO (HIGH) por padrão. O comando é ativado
+  // quando o pino é conectado ao GND, fazendo a leitura ser BAIXA (LOW).
+  pinMode(ENTRADA_DIREITA_PIN, INPUT_PULLUP);
+  pinMode(ENTRADA_ESQUERDA_PIN, INPUT_PULLUP);
 }
 
-void moveForward() {
-  Serial.println("Acao: Girando motor para FRENTE");
-  analogWrite(RPWM_PIN, MOTOR_SPEED);
-  analogWrite(LPWM_PIN, 0);
-}
-
-void moveBackward() {
-  Serial.println("Acao: Girando motor para TRAS");
-  analogWrite(RPWM_PIN, 0);
-  analogWrite(LPWM_PIN, MOTOR_SPEED);
-}
-
-void stopMotor() {
-  Serial.println("Acao: PARANDO motor");
-  analogWrite(RPWM_PIN, 0);
-  analogWrite(LPWM_PIN, 0);
-}
-
+/**
+ * @brief Função de loop principal.
+ */
 void loop() {
-  // Gira para frente por 3 segundos
-  moveForward();
-  delay(3000);
+  // Lê o estado dos pinos de entrada.
+  // A leitura será LOW se o pino estiver aterrado (botão pressionado).
+  comandoDireita = digitalRead(ENTRADA_DIREITA_PIN);
+  comandoEsquerda = digitalRead(ENTRADA_ESQUERDA_PIN);
 
-  // Para por 2 segundos
-  stopMotor();
-  delay(2000);
+  // --- Lógica de Controle dos LEDs ---
 
-  // Gira para trás por 3 segundos
-  moveBackward();
-  delay(3000);
+  // Verifica se o comando para ir para a DIREITA foi recebido (pino em LOW)
+  if (comandoDireita == LOW) {
+    Serial.println("Comando: DIREITA -> Pisca LED da direita");
+    
+    digitalWrite(LED_DIREITA_PIN, HIGH);
+    delay(250);
+    digitalWrite(LED_DIREITA_PIN, LOW);
 
-  // Para por 2 segundos
-  stopMotor();
-  delay(2000);
+    // Garante que o LED da esquerda esteja apagado
+    digitalWrite(LED_ESQUERDA_PIN, LOW);
+  }
+  // Verifica se o comando para ir para a ESQUERDA foi recebido (pino em LOW)
+  else if (comandoEsquerda == LOW) {
+    Serial.println("Comando: ESQUERDA -> Pisca LED da esquerda");
+
+    digitalWrite(LED_ESQUERDA_PIN, HIGH);
+    delay(250);
+    digitalWrite(LED_ESQUERDA_PIN, LOW);
+
+    // Garante que o LED da direita esteja apagado
+    digitalWrite(LED_DIREITA_PIN, LOW);
+  }
+  // Se nenhum comando for recebido
+  else {
+    // Garante que ambos os LEDs estejam apagados
+    digitalWrite(LED_DIREITA_PIN, LOW);
+    digitalWrite(LED_ESQUERDA_PIN, LOW);
+  }
+   delay(100); // Pequeno delay para estabilidade
 }
