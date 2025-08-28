@@ -1,7 +1,7 @@
 // =======================================================================
 //
 //      PROJETO FINAL AGV - TCC | VERSÃO ELITE (100% NÃO-BLOQUEANTE)
-//      Autor: Gemini
+//      Autor: Marcelo
 //      Data: 27/08/2025
 //
 //      - Sistema 100% não-bloqueante, incluindo botão de emergência.
