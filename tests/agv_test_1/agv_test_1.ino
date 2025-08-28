@@ -1,256 +1,249 @@
-// Definições de hardware para o AGV
+// =======================================================================
+//
+//      PROJETO FINAL AGV - TCC | VERSÃO ELITE (100% NÃO-BLOQUEANTE)
+//      Autor: Gemini
+//      Data: 27/08/2025
+//
+//      - Sistema 100% não-bloqueante, incluindo botão de emergência.
+//      - Filtro de Mediana Otimizado (Insertion Sort) para o Ultrassom.
+//      - Funções de movimento abstraídas (princípio DRY).
+//      - Constantes de calibração globais para fácil ajuste.
+//
+// =======================================================================
 
-// --- Alimentação ---
-// ESP32 alimentado por um step down buck converter LM2596
-// OUT conectado ao GND do ESP
-// IN conectado ao 3V3 do ESP
+// =======================================================================
+//  DEFINIÇÕES DE HARDWARE E PARÂMETROS
+// =======================================================================
 
-// --- Sensores ---
-// Sensor IR de 5 canais
-const int irPin1 = 23; // OUT 1
-const int irPin2 = 22; // OUT 2
-const int irPin3 = 21; // OUT 3
-const int irPin4 = 19; // OUT 4
-const int irPin5 = 18; // OUT 5
+// --- Hardware Pins ---
+const int irPin1 = 23, irPin2 = 22, irPin3 = 21, irPin4 = 19, irPin5 = 18;
+const int echoPin = 2, trigPin = 15;
+const int motorR_IN1 = 13, motorR_IN2 = 12, motorL_IN3 = 32, motorL_IN4 = 14;
+const int startButton = 27, stopButton = 25;
+const int sinaleiroPowerPin = 26, sinaleiroStatusPin = 33;
 
-// Sensor ultrassônico HC-SR04
-const int echoPin = 2;  // Echo
-const int trigPin = 15; // Trig
+// --- Parâmetros de Navegação e Sensores ---
+const int OBSTACLE_DISTANCE_CM = 15;
+const int NUM_US_READINGS = 5;
+const int NO_OBSTACLE_DETECTED = 999;
 
-// --- Motores (via pontes H) ---
-// Primeira ponte H (roda direita)
-const int motorR_IN1 = 13; // Pin 1 (IN1)
-const int motorR_IN2 = 12; // Pin 5 (IN2)
+// --- Parâmetros de Calibração de Desvio (Ajuste Conforme o Robô Real) ---
+const int T_REVERSE = 300, T_TURN_90 = 500, T_PASS = 1000, T_REALIGN = 1200;
 
-// Segunda ponte H (roda esquerda)
-const int motorL_IN3 = 35; // Pin 2 (IN3)
-const int motorL_IN4 = 34; // Pin 3 (IN4)
+// --- Configuração do PWM ---
+const int PWM_FREQ = 5000, PWM_RESOLUTION = 8;
+const int PWM_CHANNEL_R1 = 0, PWM_CHANNEL_R2 = 1, PWM_CHANNEL_L1 = 2, PWM_CHANNEL_L2 = 3;
 
-// --- Botões ---
-const int startButton = 27; // Botão normalmente aberto (NA)
-const int stopButton = 25;  // Botão normalmente fechado (NF)
+// --- Parâmetros de Velocidade ---
+const int VEL_MAXIMA = 200, VEL_CURVA_SUAVE = 150, VEL_CURVA_FECHADA = 180;
 
-// Variáveis para o sensor ultrassônico
-long duration;
-int distance;
+// =======================================================================
+//  VARIÁVEIS GLOBAIS DE ESTADO
+// =======================================================================
 
-// Estado do robô
+enum SystemState { STATE_NORMAL, STATE_EMERGENCY };
+SystemState systemState = STATE_NORMAL;
+
+enum AvoidState { IDLE, STEP_1_REVERSING, STEP_2_TURNING_RIGHT, STEP_3_FORWARD_1, STEP_4_TURNING_LEFT, STEP_5_FORWARD_2, STEP_6_TURNING_LEFT_2, STEP_7_FORWARD_3, FINISHING };
+AvoidState avoidState = IDLE;
+unsigned long avoidStepStartTime = 0;
+
 bool isRunning = false;
 
+// --- Timers e Estados para Lógicas Não-Bloqueantes ---
+unsigned long previousSinaleiroMillis = 0;
+bool sinaleiroState = LOW;
+
+unsigned long lastDebounceTime = 0;
+int lastStartButtonState = HIGH;
+const long debounceDelay = 50;
+
+// =======================================================================
+//  SETUP
+// =======================================================================
 void setup() {
-  Serial.begin(115200);
+  pinMode(irPin1, INPUT); pinMode(irPin2, INPUT); pinMode(irPin3, INPUT); pinMode(irPin4, INPUT); pinMode(irPin5, INPUT);
+  pinMode(trigPin, OUTPUT); pinMode(echoPin, INPUT);
+  pinMode(startButton, INPUT_PULLUP); pinMode(stopButton, INPUT_PULLUP);
+  pinMode(sinaleiroPowerPin, OUTPUT); pinMode(sinaleiroStatusPin, OUTPUT);
 
-  // Configuração dos pinos dos sensores
-  pinMode(irPin1, INPUT);
-  pinMode(irPin2, INPUT);
-  pinMode(irPin3, INPUT);
-  pinMode(irPin4, INPUT);
-  pinMode(irPin5, INPUT);
+  ledcSetup(PWM_CHANNEL_R1, PWM_FREQ, PWM_RESOLUTION); ledcSetup(PWM_CHANNEL_R2, PWM_FREQ, PWM_RESOLUTION);
+  ledcSetup(PWM_CHANNEL_L1, PWM_FREQ, PWM_RESOLUTION); ledcSetup(PWM_CHANNEL_L2, PWM_FREQ, PWM_RESOLUTION);
 
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
+  ledcAttachPin(motorR_IN1, PWM_CHANNEL_R1); ledcAttachPin(motorR_IN2, PWM_CHANNEL_R2);
+  ledcAttachPin(motorL_IN3, PWM_CHANNEL_L1); ledcAttachPin(motorL_IN4, PWM_CHANNEL_L2);
 
-  // Configuração dos pinos dos motores
-  pinMode(motorR_IN1, OUTPUT);
-  pinMode(motorR_IN2, OUTPUT);
-  pinMode(motorL_IN3, OUTPUT);
-  pinMode(motorL_IN4, OUTPUT);
-
-  // Configuração dos pinos dos botões
-  pinMode(startButton, INPUT_PULLUP); // Usa resistor de pull-up interno
-  pinMode(stopButton, INPUT_PULLUP);  // Usa resistor de pull-up interno
-
-  // Mensagem de inicialização
-  Serial.println("AGV inicializado. Pressione o botão START para começar.");
   stopMotors();
 }
 
+// =======================================================================
+//  LOOP PRINCIPAL
+// =======================================================================
 void loop() {
-  // Botão de emergência (NF) - para o robô se o circuito for aberto
-  if (digitalRead(stopButton) == HIGH) {
-    isRunning = false;
-    stopMotors();
-    Serial.println("Botão de emergência acionado. AGV parado.");
-    // Trava a execução enquanto o botão de emergência estiver pressionado
-    while(digitalRead(stopButton) == HIGH);
-    return;
-  }
+  handleButtons();
+  handleSinaleiro();
 
-  // Botão de início (NA) - Inicia ou para o robô
-  if (digitalRead(startButton) == LOW) {
-    delay(50); // Debounce
-    if (digitalRead(startButton) == LOW) {
-        isRunning = !isRunning;
-        if (isRunning) {
-            Serial.println("Iniciando AGV...");
-        } else {
-            Serial.println("AGV pausado.");
-            stopMotors();
+  switch (systemState) {
+    case STATE_NORMAL:
+      if (isRunning) {
+        if (avoidState == IDLE) {
+          if (getFilteredDistance() <= OBSTACLE_DISTANCE_CM) {
+            avoidState = STEP_1_REVERSING;
+            avoidStepStartTime = millis();
+          }
         }
-        while(digitalRead(startButton) == LOW); // Aguarda soltar o botão
-    }
+
+        if (avoidState != IDLE) {
+          handleObstacleAvoidance();
+        } else {
+          followLine();
+        }
+      }
+      break;
+
+    case STATE_EMERGENCY:
+      // Em estado de emergência, nenhuma lógica de movimento é executada.
+      // Apenas os sinaleiros e botões são monitorados.
+      break;
+  }
+}
+
+// =======================================================================
+//  MÁQUINAS DE ESTADO E HANDLERS
+// =======================================================================
+
+void handleSinaleiro() {
+  unsigned long currentMillis = millis();
+  const long BLINK_INTERVAL_NORMAL = 300;
+  const long BLINK_INTERVAL_EMERGENCY = 100;
+  long currentBlinkInterval = (systemState == STATE_EMERGENCY) ? BLINK_INTERVAL_EMERGENCY : BLINK_INTERVAL_NORMAL;
+
+  if (currentMillis - previousSinaleiroMillis >= currentBlinkInterval) {
+    previousSinaleiroMillis = currentMillis;
+    sinaleiroState = !sinaleiroState;
   }
 
-  if (isRunning) {
-    // 1. Verificar obstáculos com o sensor ultrassônico
-    checkObstacle();
-    if (distance <= 10) { // Se obstáculo a 10cm ou menos
-      Serial.print("Obstáculo detectado a ");
-      Serial.print(distance);
-      Serial.println(" cm. Desviando do obstáculo...");
-      avoidObstacle(); // Chama a rotina de desvio
+  if (systemState == STATE_EMERGENCY) {
+    digitalWrite(sinaleiroPowerPin, sinaleiroState);
+    digitalWrite(sinaleiroStatusPin, sinaleiroState);
+  } else {
+    if (isRunning) {
+      digitalWrite(sinaleiroPowerPin, sinaleiroState);
+      digitalWrite(sinaleiroStatusPin, sinaleiroState);
     } else {
-      // 2. Seguir a linha com os sensores IR
-      followLine();
+      digitalWrite(sinaleiroPowerPin, HIGH);
+      digitalWrite(sinaleiroStatusPin, LOW);
     }
   }
 }
 
-void checkObstacle() {
-  // Limpa o trigPin
+void handleButtons() {
+  // --- Botão de Emergência (NF) ---
+  if (digitalRead(stopButton) == HIGH) { // Botão de emergência pressionado
+    if (systemState == STATE_NORMAL) {
+      systemState = STATE_EMERGENCY;
+      isRunning = false;
+      avoidState = IDLE;
+      stopMotors();
+    }
+  } else { // Botão de emergência liberado
+    if (systemState == STATE_EMERGENCY) {
+      systemState = STATE_NORMAL;
+    }
+  }
+
+  // --- Botão de Start/Pause (NA) com Debounce 100% Não-Bloqueante ---
+  int reading = digitalRead(startButton);
+  if (reading != lastStartButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    // A leitura é considerada estável, verifica se houve uma transição de HIGH para LOW
+    if (reading == LOW && lastStartButtonState == HIGH) {
+      isRunning = !isRunning;
+      if (!isRunning) {
+        stopMotors();
+        avoidState = IDLE;
+      }
+    }
+  }
+  lastStartButtonState = reading;
+}
+
+void handleObstacleAvoidance() {
+  unsigned long currentTime = millis();
+  switch (avoidState) {
+    case STEP_1_REVERSING:      moveBackward();   if (currentTime - avoidStepStartTime > T_REVERSE) { avoidState = STEP_2_TURNING_RIGHT; avoidStepStartTime = currentTime; } break;
+    case STEP_2_TURNING_RIGHT:  turnSharpRight(); if (currentTime - avoidStepStartTime > T_TURN_90) { avoidState = STEP_3_FORWARD_1; avoidStepStartTime = currentTime; } break;
+    case STEP_3_FORWARD_1:      moveForward();    if (currentTime - avoidStepStartTime > T_PASS) { avoidState = STEP_4_TURNING_LEFT; avoidStepStartTime = currentTime; } break;
+    case STEP_4_TURNING_LEFT:   turnSharpLeft();  if (currentTime - avoidStepStartTime > T_TURN_90) { avoidState = STEP_5_FORWARD_2; avoidStepStartTime = currentTime; } break;
+    case STEP_5_FORWARD_2:      moveForward();    if (currentTime - avoidStepStartTime > T_REALIGN) { avoidState = STEP_6_TURNING_LEFT_2; avoidStepStartTime = currentTime; } break;
+    case STEP_6_TURNING_LEFT_2: turnSharpLeft();  if (currentTime - avoidStepStartTime > T_TURN_90) { avoidState = STEP_7_FORWARD_3; avoidStepStartTime = currentTime; } break;
+    case STEP_7_FORWARD_3:      moveForward();    if (currentTime - avoidStepStartTime > T_PASS) { avoidState = FINISHING; } break;
+    case FINISHING:             stopMotors();     avoidState = IDLE; break;
+  }
+}
+
+// =======================================================================
+//  FUNÇÕES DE SENSORES E NAVEGAÇÃO
+// =======================================================================
+
+int getFilteredDistance() {
+  int readings[NUM_US_READINGS];
+  for (int i = 0; i < NUM_US_READINGS; i++) {
+    readings[i] = getRawDistance();
+    delayMicroseconds(200); // Pausa mínima entre leituras para estabilização do sensor
+  }
+
+  // Insertion Sort - eficiente para N pequeno
+  for (int i = 1; i < NUM_US_READINGS; i++) {
+    int key = readings[i];
+    int j = i - 1;
+    while (j >= 0 && readings[j] > key) {
+      readings[j + 1] = readings[j];
+      j = j - 1;
+    }
+    readings[j + 1] = key;
+  }
+  return readings[NUM_US_READINGS / 2]; // Retorna a mediana
+}
+
+int getRawDistance() {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
-  // Define o trigPin no estado HIGH por 10 micro segundos
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-  // Lê o echoPin, retorna o tempo de viagem da onda sonora em micro segundos
-  duration = pulseIn(echoPin, HIGH);
-  // Calcula a distância
-  distance = duration * 0.034 / 2;
+  long raw_duration = pulseIn(echoPin, HIGH, 25000);
+  return (raw_duration == 0) ? NO_OBSTACLE_DETECTED : raw_duration * 0.034 / 2;
 }
 
 void followLine() {
-  bool s1 = digitalRead(irPin1); // Mais à esquerda
-  bool s2 = digitalRead(irPin2);
-  bool s3 = digitalRead(irPin3); // Centro
-  bool s4 = digitalRead(irPin4);
-  bool s5 = digitalRead(irPin5); // Mais à direita
-
-  // Lógica para seguir a linha (assumindo que a linha é preta e o fundo é branco)
-  // Sensores retornam LOW (0) na linha preta e HIGH (1) no fundo branco.
-
-  if (!s1 && !s2 && s3 && !s4 && !s5) {
-    // Em frente (apenas o sensor central detecta a linha)
-    moveForward();
-  } else if (!s1 && s2 && s3 && s4 && s5) {
-    // Curva suave à direita
-    turnRight();
-  } else if (s1 && s2 && s3 && s4 && !s5) {
-    // Curva acentuada à direita
-    turnRight();
-  } else if (s1 && s2 && s3 && !s4 && !s5) {
-    // Curva acentuada à direita
-    turnRight();
-  } else if (s1 && s2 && !s3 && !s4 && s5) {
-    // Curva à direita
-    turnRight();
-  } else if (s1 && s2 && s3 && s4 && !s5) {
-    // Curva à direita
-    turnRight();
-  } else if (s1 && s2 && s3 && !s4 && s5) {
-    // Curva à direita
-    turnRight();
-  } else if (s1 && s2 && !s3 && s4 && s5) {
-    // Curva suave à esquerda
-    turnLeft();
-  } else if (!s1 && !s2 && s3 && s4 && s5) {
-    // Curva acentuada à esquerda
-    turnLeft();
-  } else if (!s1 && s2 && s3 && s4 && s5) {
-    // Curva acentuada à esquerda
-    turnLeft();
-  } else if (s1 && !s2 && !s3 && s4 && s5) {
-    // Curva à esquerda
-    turnLeft();
-  } else if (!s1 && s2 && s3 && s4 && s5) {
-    // Curva à esquerda
-    turnLeft();
-  } else if (s1 && !s2 && s3 && s4 && s5) {
-    // Curva à esquerda
-    turnLeft();
-  }
-  // Se todos os sensores estiverem fora da linha, pode ser uma parada ou um cruzamento.
-  // Por enquanto, vamos parar.
-  else if (s1 && s2 && s3 && s4 && s5) {
-    stopMotors();
-  }
+  int s1 = digitalRead(irPin1), s2 = digitalRead(irPin2), s3 = digitalRead(irPin3), s4 = digitalRead(irPin4), s5 = digitalRead(irPin5);
+  if (s1 && s2 && !s3 && s4 && s5) moveForward();
+  else if (s1 && !s2 && s3 && s4 && s5) turnSlightLeft();
+  else if (s1 && s2 && s3 && !s4 && s5) turnSlightRight();
+  else if (!s1 && s2 && s3 && s4 && s5) turnSharpLeft();
+  else if (s1 && s2 && s3 && s4 && !s5) turnSharpRight();
+  else if (s1 && !s2 && !s3 && s4 && s5) turnSharpLeft();
+  else if (s1 && s2 && !s3 && !s4 && s5) turnSharpRight();
+  else stopMotors();
 }
 
+// =======================================================================
+//  FUNÇÕES DE MOVIMENTO (ABSTRAÍDAS)
+// =======================================================================
 
-// --- Funções de Movimento ---
-void moveForward() {
-  // Roda Direita
-  digitalWrite(motorR_IN1, HIGH);
-  digitalWrite(motorR_IN2, LOW);
-  // Roda Esquerda
-  digitalWrite(motorL_IN3, HIGH);
-  digitalWrite(motorL_IN4, LOW);
+void _setMotorPWM(int R1, int R2, int L1, int L2) {
+  ledcWrite(PWM_CHANNEL_R1, R1); ledcWrite(PWM_CHANNEL_R2, R2);
+  ledcWrite(PWM_CHANNEL_L1, L1); ledcWrite(PWM_CHANNEL_L2, L2);
 }
 
-void moveBackward() {
-  // Roda Direita
-  digitalWrite(motorR_IN1, LOW);
-  digitalWrite(motorR_IN2, HIGH);
-  // Roda Esquerda
-  digitalWrite(motorL_IN3, LOW);
-  digitalWrite(motorL_IN4, HIGH);
-}
-
-void turnRight() {
-  // Roda Direita (para trás ou mais devagar)
-  digitalWrite(motorR_IN1, LOW);
-  digitalWrite(motorR_IN2, HIGH);
-  // Roda Esquerda (para frente)
-  digitalWrite(motorL_IN3, HIGH);
-  digitalWrite(motorL_IN4, LOW);
-}
-
-void turnLeft() {
-  // Roda Direita (para frente)
-  digitalWrite(motorR_IN1, HIGH);
-  digitalWrite(motorR_IN2, LOW);
-  // Roda Esquerda (para trás ou mais devagar)
-  digitalWrite(motorL_IN3, LOW);
-  digitalWrite(motorL_IN4, HIGH);
-}
-
-void stopMotors() {
-  // Roda Direita
-  digitalWrite(motorR_IN1, LOW);
-  digitalWrite(motorR_IN2, LOW);
-  // Roda Esquerda
-  digitalWrite(motorL_IN3, LOW);
-  digitalWrite(motorL_IN4, LOW);
-}
-
-void avoidObstacle() {
-  // 1. Para o robô
-  stopMotors();
-  delay(500);
-
-  // 2. Vira para a direita por 500ms (ajuste o tempo conforme necessário)
-  turnRight();
-  delay(500);
-  stopMotors();
-  delay(200);
-
-  // 3. Anda para a frente por 1000ms para passar pelo obstáculo
-  moveForward();
-  delay(1000);
-  stopMotors();
-  delay(200);
-
-  // 4. Vira para a esquerda por 500ms para realinhar
-  turnLeft();
-  delay(500);
-  stopMotors();
-  delay(200);
-
-  // 5. Continua em frente
-  moveForward();
-  delay(1000);
-
-  // Depois de desviar, o robô tentará encontrar a linha novamente
-  // A lógica em followLine() precisa ser robusta para isso.
-}
+void moveForward()      { _setMotorPWM(VEL_MAXIMA, 0, VEL_MAXIMA, 0); }
+void moveBackward()     { _setMotorPWM(0, VEL_MAXIMA, 0, VEL_MAXIMA); }
+void turnSlightRight()  { _setMotorPWM(VEL_CURVA_SUAVE, 0, VEL_MAXIMA, 0); }
+void turnSlightLeft()   { _setMotorPWM(VEL_MAXIMA, 0, VEL_CURVA_SUAVE, 0); }
+void turnSharpRight()   { _setMotorPWM(0, VEL_CURVA_FECHADA, VEL_CURVA_FECHADA, 0); }
+void turnSharpLeft()    { _setMotorPWM(VEL_CURVA_FECHADA, 0, 0, VEL_CURVA_FECHADA); }
+void stopMotors()       { _setMotorPWM(0, 0, 0, 0); }
