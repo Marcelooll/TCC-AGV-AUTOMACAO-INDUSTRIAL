@@ -14,8 +14,7 @@
  * - Controle por botões de Start/Stop.
  * - Sinalização de status com LEDs.
  *
- * @note Este código foi gerado com base nas especificações do usuário, seguindo
- *       princípios de Clean Code para clareza e manutenibilidade.
+ *
  */
 
 // =================================================================
